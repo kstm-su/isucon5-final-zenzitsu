@@ -1,6 +1,8 @@
 package main
 
 import (
+	"sync"
+
 	"crypto/tls"
 	"database/sql"
 	"encoding/json"
@@ -330,8 +332,15 @@ func GetData(w http.ResponseWriter, r *http.Request) {
 	var arg Arg
 	checkErr(json.Unmarshal([]byte(argJson), &arg))
 
+	wg := new(sync.WaitGroup)
+	m := new(sync.Mutex)
+
 	data := make([]Data, 0, len(arg))
 	for service, conf := range arg {
+		func(service string, conf *Service, wg *sync.WaitGroup, m *sync.Mutex){
+		wg.Add(1)
+		defer wg.Done()
+		m.Lock()
 		row := db.QueryRow(`SELECT meth, token_type, token_key, uri FROM endpoints WHERE service=$1`, service)
 		var method string
 		var tokenType *string
@@ -361,9 +370,18 @@ func GetData(w http.ResponseWriter, r *http.Request) {
 			ks[i] = s
 		}
 		uri := fmt.Sprintf(*uriTemplate, ks...)
-
-		data = append(data, Data{service, fetchApi(method, uri, headers, params)})
+		if service != "perfectsec" && service != "perfectsec_attacked"{
+		m.Unlock()
+		}
+		dataresult := Data{service, fetchApi(method, uri, headers, params)}
+		if service != "perfectsec" && service != "perfectsec_attacked"{
+		m.Lock()
+		}
+		data = append(data, dataresult)
+		m.Unlock()
+		}(service, conf, wg, m)
 	}
+	wg.Wait()
 
 	w.Header().Set("Content-Type", "application/json")
 	body, err := json.Marshal(data)
