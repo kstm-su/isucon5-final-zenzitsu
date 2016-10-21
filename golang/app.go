@@ -337,8 +337,8 @@ func GetData(w http.ResponseWriter, r *http.Request) {
 
 	data := make([]Data, 0, len(arg))
 	for service, conf := range arg {
-		go func(service string, conf *Service, wg *sync.WaitGroup, m *sync.Mutex){
 		wg.Add(1)
+		go func(service string, conf *Service, wg *sync.WaitGroup, m *sync.Mutex){
 		defer wg.Done()
 		m.Lock()
 		row := db.QueryRow(`SELECT meth, token_type, token_key, uri FROM endpoints WHERE service=$1`, service)
