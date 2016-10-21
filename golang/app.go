@@ -2,6 +2,8 @@ package main
 
 import (
 	"sync"
+	"golang.org/x/net/http2"
+//	"github.com/gorilla/handlers"
 
 	"crypto/tls"
 	"database/sql"
@@ -50,6 +52,8 @@ type Data struct {
 }
 
 var saltChars = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
+
+var cache map[string]Data
 
 func getSession(w http.ResponseWriter, r *http.Request) *sessions.Session {
 	session, _ := store.Get(r, "isucon5q-go.session")
@@ -280,8 +284,8 @@ func PostModify(w http.ResponseWriter, r *http.Request) {
 func fetchApi(method, uri string, headers, params map[string]string) map[string]interface{} {
 	client := &http.Client{}
 	if strings.HasPrefix(uri, "https://") {
-		tr := &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		tr := &http2.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true,  NextProtos:         []string{"h2"},},
 		}
 		client.Transport = tr
 	}
@@ -310,6 +314,24 @@ func fetchApi(method, uri string, headers, params map[string]string) map[string]
 	resp, err := client.Do(req)
 	checkErr(err)
 
+/*
+	if strings.HasPrefix(uri, "https://") {
+	fmt.Println(uri)
+	for i,v := range(resp.Header){
+		fmt.Println(i,v)
+	}
+	fmt.Println("")
+	fmt.Println(resp.Request.URL)
+	fmt.Println(resp.Request.Proto)
+	for i,v := range(resp.Request.Header){
+		fmt.Println(i,v)
+	}
+	for i,v := range(resp.Request.TransferEncoding){
+		fmt.Println(i,v)
+	}
+	fmt.Println("")
+	}
+*/
 	defer resp.Body.Close()
 
 	var data map[string]interface{}
@@ -318,6 +340,8 @@ func fetchApi(method, uri string, headers, params map[string]string) map[string]
 	checkErr(d.Decode(&data))
 	return data
 }
+
+var cachelock sync.Mutex
 
 func GetData(w http.ResponseWriter, r *http.Request) {
 	user := getCurrentUser(w, r)
@@ -334,19 +358,22 @@ func GetData(w http.ResponseWriter, r *http.Request) {
 
 	wg := new(sync.WaitGroup)
 	m := new(sync.Mutex)
+	n := new(sync.Mutex)
+	dbl := new(sync.Mutex)
 
 	data := make([]Data, 0, len(arg))
 	for service, conf := range arg {
 		wg.Add(1)
-		go func(service string, conf *Service, wg *sync.WaitGroup, m *sync.Mutex){
+		go func(service string, conf *Service){
 		defer wg.Done()
-		m.Lock()
+		dbl.Lock()
 		row := db.QueryRow(`SELECT meth, token_type, token_key, uri FROM endpoints WHERE service=$1`, service)
 		var method string
 		var tokenType *string
 		var tokenKey *string
 		var uriTemplate *string
 		checkErr(row.Scan(&method, &tokenType, &tokenKey, &uriTemplate))
+		dbl.Unlock()
 
 		headers := make(map[string]string)
 		params := conf.Params
@@ -370,16 +397,34 @@ func GetData(w http.ResponseWriter, r *http.Request) {
 			ks[i] = s
 		}
 		uri := fmt.Sprintf(*uriTemplate, ks...)
-		if service != "perfectsec" && service != "perfectsec_attacked"{
-		m.Unlock()
-		}
-		dataresult := Data{service, fetchApi(method, uri, headers, params)}
-		if service != "perfectsec" && service != "perfectsec_attacked"{
+
+		if service == "perfectsec" || service == "perfectsec_attacked"{
 		m.Lock()
 		}
-		data = append(data, dataresult)
+		dataresult := Data{}
+		if tokenType == nil {
+			cachelock.Lock()
+			if a,ok := cache[uri]; ok {
+				dataresult = a
+			} else {
+				dataresult = Data{service, fetchApi(method, uri, headers, params)}
+			}
+			cachelock.Unlock()
+		} else {
+			dataresult = Data{service, fetchApi(method, uri, headers, params)}
+		}
+		if tokenType == nil {
+			cachelock.Lock()
+			cache[uri] = dataresult
+			cachelock.Unlock()
+		}
+		if service == "perfectsec" || service == "perfectsec_attacked"{
 		m.Unlock()
-		}(service, conf, wg, m)
+		}
+		n.Lock()
+		data = append(data, dataresult)
+		n.Unlock()
+		}(service, conf)
 	}
 	wg.Wait()
 
@@ -398,6 +443,7 @@ func GetInitialize(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
+	cache = map[string]Data{}
 	host := os.Getenv("ISUCON5_DB_HOST")
 	if host == "" {
 		host = "localhost"
@@ -459,6 +505,9 @@ func main() {
 	r.HandleFunc("/", GetIndex)
 	r.PathPrefix("/").Handler(http.FileServer(http.Dir("../static")))
 	log.Fatal(http.ListenAndServe(":8080", r))
+	//log.Fatal(http.ListenAndServe(":8080", handlers.LoggingHandler(os.Stdout, r)))
+	//log.Fatal(http.ListenAndServe(":8080", handlers.ProxyHeaders( r)))
+	//log.Fatal(http.ListenAndServe(":8080", handlers.CombinedLoggingHandler(os.Stdout, r)))
 }
 
 func checkErr(err error) {
