@@ -402,7 +402,7 @@ func GetData(w http.ResponseWriter, r *http.Request) {
 		m.Lock()
 		}
 		dataresult := Data{}
-		if tokenType == nil {
+		if tokenType == nil && service != "ken2" && service != "surname" && service != "givenname" {
 			cachelock.Lock()
 			if a,ok := cache[uri]; ok {
 				dataresult = a
@@ -413,7 +413,7 @@ func GetData(w http.ResponseWriter, r *http.Request) {
 		} else {
 			dataresult = Data{service, fetchApi(method, uri, headers, params)}
 		}
-		if tokenType == nil {
+		if tokenType == nil && service != "ken2" && service != "surname" && service != "givenname" {
 			cachelock.Lock()
 			cache[uri] = dataresult
 			cachelock.Unlock()
@@ -440,6 +440,7 @@ func GetInitialize(w http.ResponseWriter, r *http.Request) {
 	checkErr(err)
 	_, err = exec.Command("psql", "-f", file, "isucon5f").Output()
 	checkErr(err)
+	cache = map[string]Data{}
 }
 
 func main() {
