@@ -337,7 +337,7 @@ func GetData(w http.ResponseWriter, r *http.Request) {
 
 	data := make([]Data, 0, len(arg))
 	for service, conf := range arg {
-		func(service string, conf *Service, wg *sync.WaitGroup, m *sync.Mutex){
+		go func(service string, conf *Service, wg *sync.WaitGroup, m *sync.Mutex){
 		wg.Add(1)
 		defer wg.Done()
 		m.Lock()
